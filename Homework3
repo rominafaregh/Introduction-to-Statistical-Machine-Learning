@@ -1,0 +1,195 @@
+# 1. Logistic regression for drug use prediction
+```{r, cache = TRUE}
+drug_use <- drug_use %>% mutate_at(as.ordered, .vars=vars(Alcohol:VSA))
+drug_use <- drug_use %>%
+mutate(Gender = factor(Gender, labels=c("Male", "Female"))) %>%
+mutate(Ethnicity = factor(Ethnicity, labels=c("Black", "Asian", "White",
+"Mixed:White/Black", "Other",
+"Mixed:White/Asian",
+"Mixed:Black/Asian"))) %>%
+mutate(Country = factor(Country, labels=c("Australia", "Canada", "New Zealand",
+"Other", "Ireland", "UK", "USA")))
+head(drug_use)
+```
+
+```{r, cache = TRUE}
+drug_use <- drug_use %>% mutate(recent_cannabis_use =
+                                  factor(ifelse(Cannabis >= "CL3", "Yes", "No"), 
+                                         levels=c("No", "Yes")))
+class(drug_use$recent_cannabis_use)
+levels(drug_use$recent_cannabis_use)
+```
+
+```{r, cache = TRUE}
+drug_use_subset <- drug_use %>% select(Age:SS, recent_cannabis_use)
+```
+Split drug_use_subset into a training data set and a test data set called drug_use_train and drug_use_test.The training data should include 1500 randomly sampled observation and the test data should include the remaining observations in drug_use_subset. Verify that the data sets are of the right size by printing dim(drug_use_train) and dim(drug_use_test).
+```{r, cache = TRUE}
+# randomly sample to split data into training set and test set 
+set.seed(1)
+train.indices = sample(1:nrow(drug_use_subset), 1500)
+drug_use_train <- drug_use_subset[train.indices,]
+drug_use_test <- drug_use_subset[-train.indices,]
+# verify data sets are the right size 
+dim(drug_use_train) #1500   13
+dim(drug_use_test) #385  13
+```
+
+```{r, cache = TRUE}
+glm.fit <- glm(recent_cannabis_use ~ ., data=drug_use_train, family=binomial)
+summary(glm.fit)
+```
+
+## 2. Decision Tree Models of drug use
+
+```{r, cache = TRUE}
+tree_parameters = tree.control(nobs=nrow(drug_use_train), minsize=10, mindev=1e-3)
+```
+
+```{r, cache = TRUE}
+#number of folds 
+nfold = 10
+set.seed(1)
+folds = seq.int(nrow(drug_use_train)) %>% ## sequential obs ids
+cut(breaks = nfold, labels=FALSE) %>% ## sequential fold ids
+sample ## random fold ids
+# fit the model on training set 
+tree.drug_use = tree(recent_cannabis_use~., data = drug_use_train, control = tree_parameters)
+set.seed(3)
+#K-fold Cross validation 
+cv = cv.tree(tree.drug_use, rand=folds, FUN = prune.misclass, K=10) 
+cv
+# best size 
+best.cv=cv$size[max(which(cv$dev==min(cv$dev)))]
+best.cv #6
+```
+
+```{r, cache = TRUE}
+# Prune the tree to best size 
+pruned.drug_use = prune.misclass(tree.drug_use, best = best.cv)
+# Plot pruned tree 
+draw.tree(pruned.drug_use, nodeinfo = TRUE, cex = 0.5)
+title("Classification Tree for Drug Use Built on Training Set")
+```
+
+```{r, cache = TRUE}
+set.seed(1)
+# predict on test set 
+pred.drug_use = predict(pruned.drug_use, drug_use_test, type = "class")
+# Obtain confusion matrix 
+error = table(pred.drug_use,drug_use_test$recent_cannabis_use)
+error
+# True positive rate 
+TPR = error[2,2]/sum(error[c(1,2),2])
+TPR #0.7955
+# False positive rate 
+FPR = error[2,1]/sum(error[c(1,2),1])
+FPR #0.2424
+```
+
+```{r, cache = TRUE}
+# Specify type="reponse" to get estimated probabilities 
+prob_glm = predict(glm.fit, drug_use_test ,type = "response")
+#changing the elements of response y from class to vector
+pred.drug_use1 = predict(pruned.drug_use, drug_use_test, type = "vector")
+#pred.drug_use1 - gives two columns of No and Yes 
+# first argument is the prob.training, second is true.labels
+pred_glm = prediction(prob_glm,drug_use_test$recent_cannabis_use)
+pred_tree = prediction(pred.drug_use1[,2],drug_use_test$recent_cannabis_use)
+roc1 = performance(pred_glm, measure="tpr", x.measure="fpr")
+roc2 = performance(pred_tree, measure="tpr", x.measure="fpr")
+plot(roc1, col=2, lwd=3, main="ROC curve")
+plot(roc2, col=3, lwd=3, main="ROC curve", add = TRUE)
+abline(0,1)
+```
+
+```{r, cache = TRUE}
+# calculate AUC 
+auc_glm = performance(pred_glm,"auc")@y.values
+auc_tree = performance(pred_tree,"auc")@y.values
+c(auc_glm,auc_tree) 
+```
+
+```{r, cache = TRUE, warning=FALSE, message=FALSE}
+leukemia_data <- read_csv("leukemia_data.csv")
+```
+
+```{r, cache = TRUE}
+# mutate Type from character to a factor 
+leukemia_data <-  leukemia_data %>% mutate(Type = factor(Type))
+class(leukemia_data$Type)
+# number of patients 
+#nrow(leukemia_data) #327 
+#print the number of patients 
+table(leukemia_data$Type)
+#table(leukemia_data$Type) - sum of total patients 327 
+```
+
+```{r, cache = TRUE}
+leukemia_pca <- prcomp(leukemia_data[,-1], scale =TRUE, center = TRUE)
+sdev <- leukemia_pca$sdev
+pve <- sdev^2/sum(sdev^2)
+cumulative_pve <- cumsum(pve)
+## This will put the next two plots side by side
+par(mfrow=c(1, 2))
+## Plot proportion of variance explained
+plot(pve, type="l", lwd=3, xlab="Principal Component",
+     ylab="PVE")
+plot(cumulative_pve, type="l", lwd=3, xlab="Principal Component", ylab="Cumulative PVE", ylim=c(0,1))
+```
+
+```{r, cache = TRUE}
+# extract x for PC1 and PC2
+head(leukemia_pca$x[,1:2])
+# absolute value of PC1 and sort 
+head(sort(abs(leukemia_pca$rotation[,1]),decreasing = TRUE))
+#SEMA3F    CCT2    LDHB   COX6C  SNRPD2    ELK3  
+# defining plot_colors 
+rainbow_colors <- rainbow(7)
+plot_colors <- rainbow_colors[leukemia_data$Type]
+#plot data as a scattered plot 
+plot(leukemia_pca$x[,1:2], col=plot_colors, cex=0.6)
+text(leukemia_pca$x[,1:2], labels=leukemia_data$Type,cex=0.6, col = plot_colors) 
+```
+
+```{r, cache = TRUE}
+# create new subset which only includes rows with Type T-ALL, TEL-AML1, or Hyperdip50
+#leukemia_subset <- leukemia_data %>% filter(Type==c("T-ALL", "TEL-AML1", "Hyperdip50"))
+leukemia_subset <- leukemia_data %>% filter(Type=="T-ALL" | Type=="TEL-AML1"|Type=="Hyperdip50")
+leukemia_subset 
+# compute euclidean distance
+leuk_dist <- dist(leukemia_subset[,-1], method = "euclidean")
+set.seed(1)
+#hierarchical clustering using complete linkage 
+leuk.hclust = hclust(leuk_dist)
+```
+
+```{r, cache = TRUE}
+# install.packages("dendextend")
+library(dendextend)
+## dendrogram: branches colored by 3 groups
+dend1 = as.dendrogram(leuk.hclust)
+# color branches and labels by 3 clusters
+dend1 = color_branches(dend1, k=3)
+dend1 = color_labels(dend1, k=3)
+# change label size
+dend1 = set(dend1, "labels_cex", 0.5)
+dend1 = set_labels(dend1, labels=leukemia_subset$Type[order.dendrogram(dend1)])
+# Plot dendogram
+# rotate the dendrogram counter-clockwise to have all the terminal nodes on the right
+plot(dend1, horiz=T, main='Dendogram colored by 3 clusters')
+```
+
+```{r, cache = TRUE}
+## dendrogram: branches colored by 5 groups
+dend2 = as.dendrogram(leuk.hclust)
+# color branches and labels by 5 clusters
+dend2 = color_branches(dend2, k=5)
+dend2 = color_labels(dend2, k=5)
+# change label size
+dend2 = set(dend2, "labels_cex", 0.3)
+dend2 = set_labels(dend2, labels=leukemia_subset$Type[order.dendrogram(dend2)])
+# Plot dendogram
+# rotate the dendrogram counter-clockwise to have all the terminal nodes on the right
+plot(dend2, horiz=T, main='Dendogram colored by 5 clusters')
+```
